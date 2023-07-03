@@ -70,11 +70,32 @@ I0702 13:49:41.265134   7 store.go:429] "Ignoring ingress because of error while
  ingress="default/nginx" error="ingress does not contain a valid IngressClass"
 
 ```
+## 4. 构建镜像
+通过上述场景测试后基本已完成了此处需求开发, 接下来就可以构建镜像
+将其放到k8s环境中执行. 首先编写 Dockerfile:
+```dockerfile
+FROM golang:1.20.5 as builder
+WORKDIR /app
 
+COPY . .
+
+RUN CGO_ENABLED=0 go build -o ingress-manager main.go
+
+FROM alpine:3.15.3
+WORKDIR /app
+
+COPY --from=builder /app/ingress-manager .
+
+CMD ["./ingress-manager"]
+
+
+```
+然后开始构建镜像, 并推送到私有仓库
 ```shell
 docker build -t lynchpi/ingress-manager:1.0.0 . 
+docker push lynchpi/ingress-manager:1.0.0
 ```
-生成资源清单 ingress-manager.yaml, dry-run 表示试运行而非真正执行创建deployment.
+然后生成资源清单 ingress-manager.yaml, dry-run 表示试运行而非真正执行创建deployment.
 ```shell
 kubectl create deployment ingress-manager --image lynchpi/ingress-manager:1.0.0 \
 --dry-run=client -o yaml > manifests/ingress-manager.yaml
@@ -90,6 +111,7 @@ source "services" in API group "" at the cluster scope
 ```
 此时需要新增一个 serviceAccount 资源清单, 同时还需为该账户配置service及ingress 集群角色ClusterRole, 角色包含了可以进行的操作.
 此处注意区分 ClusterRole 与 Role, ClusterRole具备访问所有Namespace的能力, 而Role仅仅可以访问指定Namespace下的资源
+## 5. 创建ServiceAccount, ClusterRole 及 ClusterRoleBinding
 ```shell
 kubectl create serviceaccount ingress-manager-sa --dry-run=client -o yaml > manifests/ingress-manager-sa.yaml
 
