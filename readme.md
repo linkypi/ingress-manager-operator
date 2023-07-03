@@ -74,3 +74,36 @@ I0702 13:49:41.265134   7 store.go:429] "Ignoring ingress because of error while
 ```shell
 docker build -t lynchpi/ingress-manager:1.0.0 . 
 ```
+生成资源清单 ingress-manager.yaml, dry-run 表示试运行而非真正执行创建deployment.
+```shell
+kubectl create deployment ingress-manager --image lynchpi/ingress-manager:1.0.0 \
+--dry-run=client -o yaml > manifests/ingress-manager.yaml
+```
+接下来尝试执行该资源清单
+```shell
+> kubectl apply -f .\manifests\ingress-manager.yaml
+# 虽然pod已变成Running状态, 那是因为资源清单没有配置相关探针, 实际通过日志可以看到存在权限问题, 这是因为使用了默认的 serviceAccount
+> kubectl logs ingress-manager-c6984965c-9qgbp
+E0703 13:18:55.623921       1 reflector.go:148] pkg/mod/k8s.io/client-go@v0.27.3/tools/cache/reflector.go:231: Failed to watc
+h *v1.Service: failed to list *v1.Service: services is forbidden: User "system:serviceaccount:default:default" cannot list re
+source "services" in API group "" at the cluster scope
+```
+此时需要新增一个 serviceAccount 资源清单, 同时还需为该账户配置service及ingress 集群角色ClusterRole, 角色包含了可以进行的操作.
+此处注意区分 ClusterRole 与 Role, ClusterRole具备访问所有Namespace的能力, 而Role仅仅可以访问指定Namespace下的资源
+```shell
+kubectl create serviceaccount ingress-manager-sa --dry-run=client -o yaml > manifests/ingress-manager-sa.yaml
+
+# 注意生成角色后,需要将service中的 create,update,delete 删除,因为service仅需要list及watch操作
+kubectl create clusterrole ingress-manager-role --resource=ingress,Service \
+--verb list,watch,create,update,delete --dry-run=client -o yaml > manifests/ingress-manager-role.yaml
+
+# 将账户绑定到角色
+kubectl create clusterrolebinding ingress-manager-rb --role ingress-manager-role \
+ --serviceaccount default:ingress-manager-sa --dry-run=client -o yaml > manifests/ingress-manager-rb.yaml
+```
+以上资源创建完成后重新来执行
+```shell
+kubectl delete -f .\manifests\  
+kubectl apply -f .\manifests\ 
+```
+最后通过日志可以看到日志显示正常. 接下来就可以通过编辑service的注解来查看相关ingress是否生效.
